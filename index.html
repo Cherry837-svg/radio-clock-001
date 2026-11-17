@@ -1,0 +1,332 @@
+ <!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Электронные часы</title>
+  <script src="https://unpkg.com"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #000000;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    video {
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      display: none;
+    }
+    video.hidden-cam {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+      display: block;
+    }
+    #controls {
+      position: fixed;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      z-index: 10;
+      width: 85%;
+      max-width: 320px;
+    }
+    button {
+      padding: 16px 20px;
+      font-size: 16px;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      background: #2563eb;
+      color: white;
+      font-weight: 600;
+      transition: opacity 0.2s;
+    }
+    button:active { opacity: 0.75; }
+    
+    #clock-screen {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 100vw;
+      height: 100vh;
+      background: #000000;
+      z-index: 5;
+    }
+    #clock {
+      font-family: "Courier New", Courier, monospace;
+      font-size: 23vw;
+      font-weight: bold;
+      color: #00ff41;
+      text-shadow: 0 0 20px rgba(0, 255, 65, 0.45);
+      letter-spacing: 2px;
+      font-variant-numeric: tabular-nums;
+    }
+    #date {
+      font-family: "Courier New", Courier, monospace;
+      font-size: 4.5vw;
+      color: #00b32d;
+      margin-top: 10px;
+    }
+    #status {
+      position: fixed;
+      bottom: 20px;
+      font-size: 13px;
+      color: #aaaaaa;
+      background: rgba(20, 20, 20, 0.75);
+      padding: 6px 14px;
+      border-radius: 8px;
+      text-align: center;
+      z-index: 20;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="controls">
+    <button onclick="startReceiver()">1. Экран (Смотреть и слушать)</button>
+    <button onclick="startSender('user')">2. Камера: Фронтальная</button>
+    <button onclick="startSender('environment')">3. Камера: Задняя</button>
+  </div>
+
+  <div id="clock-screen">
+    <div id="clock">00:00</div>
+    <div id="date">...</div>
+  </div>
+
+  <video id="video" autoplay playsinline></video>
+  <div id="status">Выберите режим работы</div>
+
+  <script>
+    // Обязательно придумайте свое уникальное секретное имя комнаты
+    const ROOM_ID = 'moya-sekretnaya-kamera-98765';
+
+    // Конфигурация STUN + TURN для обхода DS-Lite и CGNAT у провайдеров Германии (Telekom, Vodafone, O2)
+    const PEER_CONFIG = {
+      debug: 1,
+      config: {
+        iceServers: [
+          { urls: 'stun:://google.com' },
+          { urls: 'stun:://google.com' },
+          { urls: 'stun:://twilio.com' },
+          {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          }
+        ],
+        iceCandidatePoolSize: 10
+      }
+    };
+    
+    const video = document.getElementById('video');
+    const status = document.getElementById('status');
+    const controls = document.getElementById('controls');
+    const clockScreen = document.getElementById('clock-screen');
+
+    // 1. РЕЖИМ ЭКРАНА (Прием видео и звука)
+    function startReceiver() {
+      controls.style.display = 'none';
+      status.innerText = 'Ожидание подключения камеры...';
+      video.style.display = 'block';
+      video.muted = false;
+      keepScreenAwake();
+
+      const peer = new Peer(ROOM_ID, PEER_CONFIG);
+
+      peer.on('call', (call) => {
+        status.innerText = 'Установка защищенного канала...';
+        call.answer();
+        
+        call.on('stream', (remoteStream) => {
+          video.srcObject = remoteStream;
+          video.play().then(() => {
+            status.style.display = 'none';
+          }).catch(() => {
+            status.style.display = 'block';
+            status.innerText = 'Коснитесь экрана, чтобы включить звук';
+          });
+        });
+
+        call.on('close', () => {
+          status.style.display = 'block';
+          status.innerText = 'Камера отключилась. Ожидание...';
+        });
+      });
+
+      peer.on('disconnected', () => {
+        peer.reconnect();
+      });
+
+      peer.on('error', (err) => {
+        status.style.display = 'block';
+        if (err.type === 'unavailable-id') {
+          status.innerText = 'Ошибка: экран уже открыт на другом устройстве';
+        } else {
+          status.innerText = 'Переподключение к серверу... (' + err.type + ')';
+          setTimeout(() => peer.reconnect(), 3000);
+        }
+      });
+    }
+
+    // 2. РЕЖИМ КАМЕРЫ (Передача видео и звука + маскировка под часы)
+    async function startSender(facingMode) {
+      controls.style.display = 'none';
+      status.innerText = 'Запуск камеры...';
+      
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            facingMode: facingMode,
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }, 
+          audio: { echoCancellation: true, noiseSuppression: true } 
+        });
+        
+        video.muted = true;
+        video.srcObject = stream;
+        video.classList.add('hidden-cam');
+        
+        clockScreen.style.display = 'flex';
+        startClock();
+        keepScreenAwake();
+
+        const peer = new Peer(PEER_CONFIG);
+        let activeCall = null;
+
+        function connectToReceiver() {
+          if (activeCall) {
+            activeCall.close();
+          }
+          activeCall = peer.call(ROOM_ID, stream);
+          if (activeCall) {
+            activeCall.on('close', () => setTimeout(connectToReceiver, 4000));
+            activeCall.on('error', () => setTimeout(connectToReceiver, 4000));
+          }
+        }
+
+        peer.on('open', () => {
+          status.style.display = 'none';
+          connectToReceiver();
+        });
+
+        peer.on('disconnected', () => {
+          peer.reconnect();
+        });
+
+        peer.on('error', (err) => {
+          if (err.type === 'peer-unavailable') {
+            setTimeout(connectToReceiver, 4000);
+          } else {
+            setTimeout(() => peer.reconnect(), 4000);
+          }
+        });
+
+      } catch (err) {
+        status.style.display = 'block';
+        status.innerText = 'Нет доступа к камере или микрофону';
+      }
+    }
+
+    // Работа электронных часов
+    function startClock() {
+      const days = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+      const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+
+      function update() {
+        const now = new Date();
+        const hours = String(now.getHours()).padStart(2, '0');
+        const mins = String(now.getMinutes()).padStart(2, '0');
+        document.getElementById('clock').innerText = `${hours}:${mins}`;
+        document.getElementById('date').innerText = `${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]}`;
+      }
+      update();
+      setInterval(update, 1000);
+    }
+
+    // Блокировка затухания экрана
+    async function keepScreenAwake() {
+      try {
+        if ('wakeLock' in navigator) {
+          await navigator.wakeLock.request('screen');
+        }
+      } catch (e) {}
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        keepScreenAwake();
+      }
+    });
+
+    // Полноэкранный режим
+    function toggleFullScreen() {
+      const docEl = document.documentElement;
+      if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+        if (docEl.requestFullscreen) {
+          docEl.requestFullscreen().catch(() => {});
+        } else if (docEl.webkitRequestFullscreen) {
+          docEl.webkitRequestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        } else if (document.webkitExitFullscreen) {
+          document.webkitExitFullscreen();
+        }
+      }
+    }
+
+    // Разблокировка звука при одиночном касании экрана
+    document.body.addEventListener('click', () => {
+      if (video.srcObject && video.paused) {
+        video.play().then(() => {
+          status.style.display = 'none';
+        }).catch(() => {});
+      }
+    });
+
+    // Двойной клик (ПК) и двойной тап (смартфоны) для полноэкранного режима
+    document.body.addEventListener('dblclick', toggleFullScreen);
+    let lastTap = 0;
+    document.body.addEventListener('touchend', (e) => {
+      if (e.target.tagName === 'BUTTON') return;
+      const currentTime = Date.now();
+      if (currentTime - lastTap < 300 && currentTime - lastTap > 0) {
+        e.preventDefault();
+        toggleFullScreen();
+      }
+      lastTap = currentTime;
+    });
+  </script>
+
+</body>
+</html>
