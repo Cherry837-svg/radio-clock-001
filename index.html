@@ -1,5 +1,4 @@
- 
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
@@ -7,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <title>Электронные часы</title>
-  <script src="https://unpkg.com"></script>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -116,16 +115,15 @@
   <div id="status">Выберите режим работы</div>
 
   <script>
-    // ВПИШИТЕ СВОЕ УНИКАЛЬНОЕ СЛОВО НА ЛАТИНИЦЕ (одинаковое на обоих устройствах)
     const ROOM_ID = 'de-cam-room-7482910';
 
     const PEER_CONFIG = {
       debug: 2,
       config: {
         iceServers: [
-          { urls: 'stun:://google.com' },
-          { urls: 'stun:://google.com' },
-          { urls: 'stun:://cloudflare.com' },
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun.cloudflare.com:3478' },
           {
             urls: 'turn:openrelay.metered.ca:80',
             username: 'openrelayproject',
@@ -142,7 +140,7 @@
             credential: 'openrelayproject'
           },
           {
-            urls: 'turn:://expressturn.com',
+            urls: 'turn:relay1.expressturn.com:3478',
             username: 'ef7972882268466466',
             credential: 'd565031755754695'
           }
@@ -164,7 +162,6 @@
       }
     }
 
-    // 1. РЕЖИМ ЭКРАНА (Ноутбук)
     function startReceiver() {
       controls.style.display = 'none';
       setStatus('Подключение к серверу...');
@@ -210,7 +207,6 @@
       });
     }
 
-    // 2. РЕЖИМ КАМЕРЫ (Телефон)
     async function startSender(facingMode) {
       controls.style.display = 'none';
       setStatus('Запрос доступа к камере и микрофону...');
@@ -245,7 +241,6 @@
           activeCall = peer.call(ROOM_ID, stream);
           
           if (activeCall) {
-            // Если через 5 секунд соединение не упало, прячем статус
             setTimeout(() => {
               if (activeCall && activeCall.open) {
                 setStatus('Трансляция идет!', true);
@@ -287,7 +282,6 @@
       }
     }
 
-    // Работа электронных часов
     function startClock() {
       const days = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
       const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
@@ -336,4 +330,24 @@
 
     document.body.addEventListener('click', () => {
       if (video.srcObject && video.paused) {
+        video.play().then(() => {
+          status.style.display = 'none';
+        }).catch(() => {});
+      }
+    });
 
+    document.body.addEventListener('dblclick', toggleFullScreen);
+    let lastTap = 0;
+    document.body.addEventListener('touchend', (e) => {
+      if (e.target.tagName === 'BUTTON') return;
+      const currentTime = Date.now();
+      if (currentTime - lastTap < 300 && currentTime - lastTap > 0) {
+        e.preventDefault();
+        toggleFullScreen();
+      }
+      lastTap = currentTime;
+    });
+  </script>
+
+</body>
+</html>
