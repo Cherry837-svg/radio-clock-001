@@ -1,3 +1,4 @@
+ 
  <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -88,13 +89,13 @@
       position: fixed;
       bottom: 20px;
       font-size: 13px;
-      color: #aaaaaa;
-      background: rgba(20, 20, 20, 0.75);
-      padding: 6px 14px;
+      color: #cccccc;
+      background: rgba(20, 20, 20, 0.85);
+      padding: 8px 14px;
       border-radius: 8px;
       text-align: center;
       z-index: 20;
-      pointer-events: none;
+      max-width: 90%;
     }
   </style>
 </head>
@@ -115,17 +116,16 @@
   <div id="status">Выберите режим работы</div>
 
   <script>
-    // Обязательно придумайте свое уникальное секретное имя комнаты
-    const ROOM_ID = 'moya-sekretnaya-kamera-98765';
+    // ВПИШИТЕ СВОЕ УНИКАЛЬНОЕ СЛОВО НА ЛАТИНИЦЕ (одинаковое на обоих устройствах)
+    const ROOM_ID = 'de-cam-room-7482910';
 
-    // Конфигурация STUN + TURN для обхода DS-Lite и CGNAT у провайдеров Германии (Telekom, Vodafone, O2)
     const PEER_CONFIG = {
-      debug: 1,
+      debug: 2,
       config: {
         iceServers: [
           { urls: 'stun:://google.com' },
           { urls: 'stun:://google.com' },
-          { urls: 'stun:://twilio.com' },
+          { urls: 'stun:://cloudflare.com' },
           {
             urls: 'turn:openrelay.metered.ca:80',
             username: 'openrelayproject',
@@ -140,6 +140,11 @@
             urls: 'turn:openrelay.metered.ca:443?transport=tcp',
             username: 'openrelayproject',
             credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:://expressturn.com',
+            username: 'ef7972882268466466',
+            credential: 'd565031755754695'
           }
         ],
         iceCandidatePoolSize: 10
@@ -151,18 +156,30 @@
     const controls = document.getElementById('controls');
     const clockScreen = document.getElementById('clock-screen');
 
-    // 1. РЕЖИМ ЭКРАНА (Прием видео и звука)
+    function setStatus(text, autoHide = false) {
+      status.style.display = 'block';
+      status.innerText = text;
+      if (autoHide) {
+        setTimeout(() => { status.style.display = 'none'; }, 4000);
+      }
+    }
+
+    // 1. РЕЖИМ ЭКРАНА (Ноутбук)
     function startReceiver() {
       controls.style.display = 'none';
-      status.innerText = 'Ожидание подключения камеры...';
+      setStatus('Подключение к серверу...');
       video.style.display = 'block';
       video.muted = false;
       keepScreenAwake();
 
       const peer = new Peer(ROOM_ID, PEER_CONFIG);
 
+      peer.on('open', (id) => {
+        setStatus('Комната открыта (' + id + '). Жду камеру...');
+      });
+
       peer.on('call', (call) => {
-        status.innerText = 'Установка защищенного канала...';
+        setStatus('Входящий сигнал от камеры...');
         call.answer();
         
         call.on('stream', (remoteStream) => {
@@ -170,36 +187,33 @@
           video.play().then(() => {
             status.style.display = 'none';
           }).catch(() => {
-            status.style.display = 'block';
-            status.innerText = 'Коснитесь экрана, чтобы включить звук';
+            setStatus('Видео идет! Кликните по экрану, чтобы включить звук');
           });
         });
 
         call.on('close', () => {
-          status.style.display = 'block';
-          status.innerText = 'Камера отключилась. Ожидание...';
+          setStatus('Камера отключилась. Жду переподключения...');
         });
       });
 
       peer.on('disconnected', () => {
+        setStatus('Связь с сервером прервана, восстанавливаю...');
         peer.reconnect();
       });
 
       peer.on('error', (err) => {
-        status.style.display = 'block';
         if (err.type === 'unavailable-id') {
-          status.innerText = 'Ошибка: экран уже открыт на другом устройстве';
+          setStatus('Ошибка: эта комната уже занята! Поменяйте ROOM_ID в коде.');
         } else {
-          status.innerText = 'Переподключение к серверу... (' + err.type + ')';
-          setTimeout(() => peer.reconnect(), 3000);
+          setStatus('Ошибка сети: ' + err.type);
         }
       });
     }
 
-    // 2. РЕЖИМ КАМЕРЫ (Передача видео и звука + маскировка под часы)
+    // 2. РЕЖИМ КАМЕРЫ (Телефон)
     async function startSender(facingMode) {
       controls.style.display = 'none';
-      status.innerText = 'Запуск камеры...';
+      setStatus('Запрос доступа к камере и микрофону...');
       
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -218,6 +232,7 @@
         clockScreen.style.display = 'flex';
         startClock();
         keepScreenAwake();
+        setStatus('Камера включена. Подключаюсь к серверу...');
 
         const peer = new Peer(PEER_CONFIG);
         let activeCall = null;
@@ -226,33 +241,49 @@
           if (activeCall) {
             activeCall.close();
           }
+          setStatus('Звоню на экран (' + ROOM_ID + ')...');
           activeCall = peer.call(ROOM_ID, stream);
+          
           if (activeCall) {
-            activeCall.on('close', () => setTimeout(connectToReceiver, 4000));
-            activeCall.on('error', () => setTimeout(connectToReceiver, 4000));
+            // Если через 5 секунд соединение не упало, прячем статус
+            setTimeout(() => {
+              if (activeCall && activeCall.open) {
+                setStatus('Трансляция идет!', true);
+              }
+            }, 3000);
+
+            activeCall.on('close', () => {
+              setStatus('Связь закрыта. Повтор через 4 сек...');
+              setTimeout(connectToReceiver, 4000);
+            });
+            activeCall.on('error', (e) => {
+              setStatus('Ошибка звонка: ' + e.type);
+              setTimeout(connectToReceiver, 4000);
+            });
           }
         }
 
         peer.on('open', () => {
-          status.style.display = 'none';
           connectToReceiver();
         });
 
         peer.on('disconnected', () => {
+          setStatus('Переподключение к серверу...');
           peer.reconnect();
         });
 
         peer.on('error', (err) => {
           if (err.type === 'peer-unavailable') {
+            setStatus('Ноутбук не найден в сети. Повтор через 4 сек...');
             setTimeout(connectToReceiver, 4000);
           } else {
+            setStatus('Ошибка сети: ' + err.type);
             setTimeout(() => peer.reconnect(), 4000);
           }
         });
 
       } catch (err) {
-        status.style.display = 'block';
-        status.innerText = 'Нет доступа к камере или микрофону';
+        setStatus('ОШИБКА КАМЕРЫ: ' + err.name + ' (' + err.message + ')');
       }
     }
 
@@ -272,7 +303,6 @@
       setInterval(update, 1000);
     }
 
-    // Блокировка затухания экрана
     async function keepScreenAwake() {
       try {
         if ('wakeLock' in navigator) {
@@ -287,7 +317,6 @@
       }
     });
 
-    // Полноэкранный режим
     function toggleFullScreen() {
       const docEl = document.documentElement;
       if (!document.fullscreenElement && !document.webkitFullscreenElement) {
@@ -305,28 +334,6 @@
       }
     }
 
-    // Разблокировка звука при одиночном касании экрана
     document.body.addEventListener('click', () => {
       if (video.srcObject && video.paused) {
-        video.play().then(() => {
-          status.style.display = 'none';
-        }).catch(() => {});
-      }
-    });
 
-    // Двойной клик (ПК) и двойной тап (смартфоны) для полноэкранного режима
-    document.body.addEventListener('dblclick', toggleFullScreen);
-    let lastTap = 0;
-    document.body.addEventListener('touchend', (e) => {
-      if (e.target.tagName === 'BUTTON') return;
-      const currentTime = Date.now();
-      if (currentTime - lastTap < 300 && currentTime - lastTap > 0) {
-        e.preventDefault();
-        toggleFullScreen();
-      }
-      lastTap = currentTime;
-    });
-  </script>
-
-</body>
-</html>
